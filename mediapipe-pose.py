@@ -7,9 +7,10 @@ import winsound
 import requests
 from collections import deque
 
-cap = cv2.VideoCapture(0)
-cap.set(3,1280)
-cap.set(4,720)
+front_cam = cv2.VideoCapture(0)
+size_cam = cv2.VideoCapture("http://192.168.1.107:4747")
+front_cam.set(3,1280)
+front_cam.set(4,720)
 
 
 #Initalize Mediapipe-pose
@@ -32,7 +33,7 @@ status_start_time = None # Timer cho STATUS_DELAY (gửi snapshot)
 bad_start_time = None # Timer riêng cho ALERT_DELAY (beep/alert)
 STATUS_DELAY = 5
 ALERT_DELAY = 30
-token  = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0aGFuaG5ndXllbnNvbmpxa0BnbWFpbC5jb20iLCJyb2xlIjoiVVNFUiIsImlhdCI6MTc4MTg0NTUzNiwiZXhwIjoxNzgxODQ2NDM2fQ.8RDKiLZ8MLJTh0RlfxeUG9VGHucj_MOwjJWX5HU2r1k"
+token  = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0aGFuaG5ndXllbnNvbmpxa0BnbWFpbC5jb20iLCJyb2xlIjoiVVNFUiIsImlhdCI6MTc4MTkxOTg3NCwiZXhwIjoxNzgxOTIwNzc0fQ.yRAJsW-N96fsLZsuEdsFXvqD6_NBkW4haRN_zzDLUnE"
 SESSION_ID = 4
 
 
@@ -152,6 +153,23 @@ def send_snapshot(token,session_id,shouder_r,torso_a,neck_a,status):
     except Exception as e:
         logg.error(f"Failed to send snapshot: {e}")
 
+def send_message(token,status):
+    try:
+        http_res = requests.post("http://localhost:8080/api/mqtt/alert",
+                            headers={
+                                "Content-Type": "application/json",
+                                "Authorization": f"Bearer {token}"
+                            },
+                            json={
+                                "status":status,
+                            }      
+                        )
+        print(f"Message sent [{status}]: {http_res.status_code}")
+    except Exception as e:
+        logg.error(f"Failed to send message: {e}")
+
+
+
 def send_alert(token,session_id,status):
     try:
         http_res = requests.post("http://localhost:8080/api/alert/create",
@@ -171,7 +189,9 @@ def send_alert(token,session_id,status):
 
 
 while True:
-    ret,frame = cap.read()
+    ret_front,frame_front = front_cam.read()
+    ret_side, frame_side = size_cam.read()
+
     if ret:
         frame = cv2.flip(frame,1)
         frameRGB = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)    
@@ -267,8 +287,10 @@ while True:
             if final_text == "GOOD_POSTURE":
                 if(final_text != last_sent_status):
                     send_snapshot(token,SESSION_ID,shouder_ang,torso_ang,neck_ang,final_text)
+                    send_message(token,final_text)
                 last_sent_status = final_text
                 status_start_time = None
+
             else:
                 # WARNING hoặc BAD: đợi STATUS_DELAY giây rồi mới gửi
                 if final_text != last_sent_status:
@@ -280,11 +302,14 @@ while True:
                     
                     if posture_duration >= STATUS_DELAY:
                         send_snapshot(token,SESSION_ID,shouder_ang,torso_ang,neck_ang,final_text)
+                        send_message(token,final_text)
                         last_sent_status = final_text
                         status_start_time = None # Reset sau khi gửi
                 else:
                     status_start_time = None
-         
+
+
+
             # ============== BAD ALERT (Beep sau 30s) =====================
             if final_text == "BAD_POSTURE":
                 if bad_start_time is None:
@@ -294,7 +319,6 @@ while True:
                         cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
                 if bad_duration >= ALERT_DELAY and not alert_sent:
                     print("Vui lòng ngồi đúng tư thế!")
-                    winsound.Beep(1000, 1000)
                     send_alert(token,SESSION_ID,final_text)
                     alert_sent = True
 
