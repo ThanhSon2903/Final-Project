@@ -5,13 +5,11 @@ import logging as logg
 import time
 import requests
 from collections import deque
-import threading
-from flask import Flask,request,jsonify
 
 front_cam = cv2.VideoCapture(0)
 side_cam = cv2.VideoCapture(1)
 
-
+#Initalize Mediapipe-pose
 mpPose = mp.solutions.pose #lấy module Pose từ MediaPipe
 pose_front = mpPose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 pose_side = mpPose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
@@ -22,7 +20,7 @@ alert_sent = False
 
 
 list = []
-shouder_history = deque(maxlen = 15)
+shouder_history = deque(maxlen = 15) #Luu toi da 15 phan tu
 torso_history = deque(maxlen = 15)
 neck_history = deque(maxlen = 15)
 upper_history = deque(maxlen=15)
@@ -32,42 +30,16 @@ status_start_time = None # Timer cho STATUS_DELAY (gửi snapshot)
 bad_start_time = None # Timer riêng cho ALERT_DELAY (beep/alert)
 current_detected_status = None
 STATUS_DELAY = 5
-WARNING_DELAY = 6
-BAD_DELAY = 7
+WARNING_DELAY = 10
+BAD_DELAY = 15 
 ALERT_DELAY = 15
-# token  = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0aGFuaG5ndXllbnNvbmpxa0BnbWFpbC5jb20iLCJyb2xlIjoiVVNFUiIsImlhdCI6MTc4MjYxMTEyMywiZXhwIjoxNzgyNjEyMDIzfQ.ua8JIvbiO7RvtwvOsNvExBD44Ga7ghRhjPd4kc8xDAM"
-# SESSION_ID = 4
+
+
+token  = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0aGFuaG5ndXllbnNvbmpxa0BnbWFpbC5jb20iLCJyb2xlIjoiVVNFUiIsImlhdCI6MTc4Mjc5NjczMywiZXhwIjoxNzgyNzk3NjMzfQ.A3PyOeA-i-EF5cFMvxO9fnZtn4CfYga3Azb27KRzwHQ"
+SESSION_ID = 4
     
 
-app = Flask(__name__)
-log = logg.getLogger('werkzeug')
-log.setLevel(logg.ERROR)
 
-token = None
-SESSION_ID = 4
-
-@app.route('/set-token',method = ['GET', 'POST'])
-def set_token():
-    global token, SESSION_ID
-    req_token = request.args.get('token') or (request.json.get('token') if request.is_json else None)
-    req_session = request.args.get('sessionId') or (request.json.get('sessionId') if request.is_json else None)
-
-    if req_token:
-        token = req_token
-        if req_session:
-            SESSION_ID = int(req_session)
-        print(f"\n>>> [HỆ THỐNG] Đã nhận dữ liệu Đăng Nhập từ Website! SESSION_ID: {SESSION_ID}")
-        return jsonify({"status": "success", "message": "Token updated successfully"}), 200
-    return jsonify({"status": "error", "message": "Missing token"}), 400
-
-def start_flask_server():
-
-    app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
-
-
-flask_thread = threading.Thread(target=start_flask_server, daemon=True)
-flask_thread.start()
-print(">>> [HỆ THỐNG] Đang lắng nghe Token tại http://127.0.0.1:5000/set-token ...")
 
 def make_lm_timestaps(res): #Chứa toạ độ các điểm trên khung xương
     lm_list = []
@@ -87,7 +59,7 @@ def compare_Diff_Shoulder(res,frame):
         logg.error("Không tìm thấy người")
         return None;
     lm = res.pose_landmarks.landmark
-    h,w= frame.shape[:2]
+    h,w,_ = frame.shape
 
     if not is_visibility(lm[11],lm[12]):
         return None
@@ -259,64 +231,64 @@ while True:
 
         # Nếu đang ngồi dựa lưng thì mới ngưỡng cổ
         if torso_ang is not None and torso_ang < -10:
-            if neck_ang <= 25:
+            if neck_ang <= 30:
                 neck_state = "STRAIGHT"
-            elif neck_ang <= 35:
+            elif neck_ang <= 38:
                 neck_state = "WARNING"
             else:
                 neck_state = "BAD"
 
         # Ngồi bình thường
         else:
-            if neck_ang <= 18:
+            if neck_ang <= 20:
                 neck_state = "STRAIGHT"
-            elif neck_ang <= 30:
+            elif neck_ang <= 35:
                 neck_state = "WARNING"
             else:
                 neck_state = "BAD"
 
-    warning_count = 0
-    bad_count = 0
-    messages = []
+    
+    
+    messages,warning_messages,bad_messages = [],[],[]
 
    #########Vai##############
     if shoulder_state == "WARNING":
-        warning_count += 1
-        messages.append("LECH VAI")
+        warning_messages.append("BAN DANG LECH VAI")
 
     elif shoulder_state == "BAD":
-        bad_count += 1
-        messages.append("LECH VAI")
+        bad_messages.append("CANH BAO BAN NGOI LECH VAI QUA MUC")
 
 
     #########Lưng##############
     if torso_state == "WARNING":
-        warning_count += 1
-        messages.append("GU LUNG")
+        warning_messages.append("BAN DANG GU LUNG")
 
     elif torso_state == "BAD":
-        bad_count += 1
-        messages.append("GU LUNG")
+        bad_messages.append("CANH BAO BAN NGOI GU LUNG QUA MUC")
 
 
     #########Cổ##############
     if neck_state == "WARNING":
-        warning_count += 1
-        messages.append("GU CO")
+        warning_messages.append("BAN DANG GU CO")
 
     elif neck_state == "BAD":
-        bad_count += 1
-        messages.append("GU CO")
+        bad_messages.append("CANH BAO BAN NGOI GU CO QUA MUC")
     
+
+
     #########Kết quả##############
     if shoulder_state is None or torso_state is None or neck_state is None:
         level = "NO_PERSON"
-    elif bad_count > 0:
+        messages = []
+    elif bad_messages:
         level = "BAD_POSTURE"
-    elif warning_count > 0:
+        messages = bad_messages #Uu tien cac loi canh bao
+    elif warning_messages   :
         level = "WARNING_POSTURE"
+        messages = warning_messages
     else:
         level = "GOOD_POSTURE"
+        messages = []
 
     ######### Join ##############
     if level == "GOOD_POSTURE":
